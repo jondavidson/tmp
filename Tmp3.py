@@ -94,3 +94,32 @@ class DaskPipeline:
         Shutdown the Dask client.
         """
         self.client.shutdown()
+
+
+from pathlib import Path
+
+# Define the functions
+def task1(output_path):
+    output_file = Path(output_path)
+    output_file.touch()  # Simulate writing a file
+    return output_file
+
+def task2(input_file):
+    print(f"Processing {input_file}")
+    # Simulate processing the input file
+    return f"Processed {input_file}"
+
+# Create the DaskPipeline
+pipeline = DaskPipeline(output_dir="output_dir", scheduler_address="tcp://localhost:8786")
+
+# Add the first task (task1), which generates a file
+pipeline.add_task(func=task1, task_name="generate_file", inputs={"output_path": "file.txt"})
+
+# Add the second task (task2), which depends on the output of task1
+pipeline.add_task(func=task2, task_name="process_file", inputs={"input_file": "generate_file"}, depends_on=["generate_file"])
+
+# Run the pipeline
+pipeline.run()
+
+# Shut down the pipeline
+pipeline.shutdown()
