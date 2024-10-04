@@ -1,0 +1,54 @@
+execution_mode: process  # Options: 'process' or 'module'
+
+datasets:
+  dataset1:
+    type: dated
+    location: data/dataset1/{date}/dataset1_{date}.csv
+    date_format: "%Y%m%d"
+  dataset2:
+    type: dated
+    location: data/dataset2/{date}/dataset2_{date}.csv
+    date_format: "%Y%m%d"
+  dataset3:
+    type: dated
+    location: data/dataset3/{date}/dataset3_{date}.csv
+    date_format: "%Y%m%d"
+
+scripts:
+  - name: script1.py
+    outputs:
+      - dataset1
+    inputs: []
+    args:
+      - --output
+      - "{dataset1}"
+    date_parameters: true
+
+  - name: script2.py
+    outputs:
+      - dataset2
+    inputs:
+      - dataset1
+    args:
+      - --input
+      - "{dataset1}"
+      - --output
+      - "{dataset2}"
+      - --multiplier
+      - '3'
+    date_parameters: true
+
+  - name: script3.py
+    outputs:
+      - dataset3
+    inputs:
+      - dataset1
+      - dataset2
+    args:
+      - --input1
+      - "{dataset1}"
+      - --input2
+      - "{dataset2}"
+      - --output
+      - "{dataset3}"
+    date_parameters: true
