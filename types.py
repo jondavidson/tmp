@@ -1,71 +1,59 @@
-from collections import OrderedDict
+import polars as pl
+import numpy as np
+from numba import jitclass, float64, uint8, types, numpy_support
 
-# Extended Polars to Numba type mapping
-polars_to_numba = {
-    "Int64": "int64",
-    "Int32": "int32",
-    "Float64": "float64",
-    "Float32": "float32",
-    "Utf8": "str",       # Numba uses 'str' for strings
-    "Boolean": "bool"
-}
-
-def cast_polars_to_numba(polars_schema: OrderedDict, numba_spec: list):
-    casted_schema = OrderedDict()
-
-    # Iterate through each field in the Numba spec
-    for field_name, numba_type in numba_spec:
-        # Get the corresponding Polars type from the Polars schema
-        polars_type = polars_schema.get(field_name)
-        
-        if polars_type is None:
-            raise ValueError(f"Field {field_name} not found in Polars schema")
-        
-        # Check if the Numba type is a vector (has "[:]")
-        if "[:]" in numba_type:
-            # Extract the base type (e.g., float64 from float64[:])
-            base_numba_type = numba_type.replace("[:]", "")
-            target_polars_type = polars_to_numba.get(polars_type)
-
-            if target_polars_type is None:
-                raise ValueError(f"Unsupported Polars type: {polars_type} for field {field_name}")
-
-            # Check if the base type matches after casting
-            if target_polars_type != base_numba_type:
-                print(f"Casting field '{field_name}' from {polars_type} to {base_numba_type}[]")
-                casted_schema[field_name] = base_numba_type + "[]"
-            else:
-                casted_schema[field_name] = target_polars_type + "[]"
-        else:
-            # Scalar case
-            target_numba_type = polars_to_numba.get(polars_type)
-            
-            if target_numba_type is None:
-                raise ValueError(f"Unsupported Polars type: {polars_type} for field {field_name}")
-            
-            if target_numba_type != numba_type:
-                print(f"Casting field '{field_name}' from {polars_type} to {numba_type}")
-                casted_schema[field_name] = numba_type
-            else:
-                casted_schema[field_name] = target_numba_type
-
-    return casted_schema
-
-# Example usage:
-polars_schema = OrderedDict([
-    ('field1', 'Int64'),
-    ('field2', 'Float32'),
-    ('field3', 'Utf8'),
-    ('field4', 'Boolean')
-])
-
-numba_spec = [
-    ('field1', 'int64[:]'),
-    ('field2', 'float64[:]'),
-    ('field3', 'str'),
-    ('field4', 'bool')
+# Define the Numba jitclass spec
+spec = [
+    ('col1', float64[:]),
+    ('col2', uint8[:]),
+    # Add more columns and types as needed
 ]
 
-# Perform the cast
-casted_schema = cast_polars_to_numba(polars_schema, numba_spec)
-print(casted_schema)
+# Extract parameter names from the spec
+param_names = [col_name for col_name, _ in spec]
+
+# Build the class definition code as a string
+class_def = """
+@jitclass(spec)
+class MyClass:
+    def __init__(self, {}):
+{}
+""".format(
+    ', '.join(param_names),
+    '\n'.join(['        self.{0} = {0}'.format(name) for name in param_names])
+)
+
+# Execute the class definition code
+local_vars = {'spec': spec, 'jitclass': jitclass}
+exec(class_def, globals(), local_vars)
+MyClass = local_vars['MyClass']
+
+# Assume you have a Polars DataFrame 'df'
+df = pl.DataFrame({
+    'col1': [1.1, 2.2, 3.3],
+    'col2': [1, 0, 1],
+    # Add more data as needed
+})
+
+# Function to map Numba types to NumPy dtypes
+def numba_type_to_numpy_dtype(numba_type):
+    if isinstance(numba_type, types.Array):
+        numba_dtype = numba_type.dtype
+    else:
+        numba_dtype = numba_type
+    numpy_dtype = numpy_support.as_dtype(numba_dtype)
+    return numpy_dtype
+
+# Extract and cast columns based on the spec
+kwargs = {}
+for col_name, numba_type in spec:
+    numpy_dtype = numba_type_to_numpy_dtype(numba_type)
+    try:
+        kwargs[col_name] = df[col_name].to_numpy().astype(numpy_dtype)
+    except ValueError as e:
+        print(f"Error casting column '{col_name}': {e}")
+        raise
+
+# Now, construct your jitclass instance using unpacking
+my_instance = MyClass(**kwargs)
+
