@@ -1,0 +1,122 @@
+# =========================
+# Dask Cluster Setup Scripts
+# =========================
+
+# This guide provides all the necessary code snippets to set up a Dask cluster running
+# 60 worker processes across two machines (Machine A and Machine B), with 30 workers on each.
+# The setup includes starting the Dask scheduler, launching workers with CPU affinity,
+# and configuring the Dask client. Comments are included for clarity.
+
+# -------------------------
+# On Machine A (Scheduler)
+# -------------------------
+
+# 1. Start the Dask Scheduler
+#    Open a terminal on Machine A and run:
+
+dask-scheduler
+
+# This will start the Dask scheduler on the default port 8786.
+# Note the IP address of Machine A (e.g., 192.168.1.100) for worker and client connections.
+
+# 2. Start Dask Workers on Machine A
+#    Create a script named 'start_workers_machine_a.sh' with the following content:
+
+#!/bin/bash
+# start_workers_machine_a.sh
+
+# Scheduler address (Machine A's IP address and scheduler port)
+SCHEDULER_ADDRESS="tcp://192.168.1.100:8786"
+NUM_WORKERS=30  # Number of workers to start on Machine A
+
+# Set threading environment variables to limit threads per worker
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+
+# Start workers with CPU affinity
+for i in $(seq 0 $((NUM_WORKERS - 1))); do
+    # Set DASK_CPU_AFFINITY environment variable
+    export DASK_CPU_AFFINITY=$i
+    # Pin worker to CPU core $i using taskset
+    taskset -c $i dask-worker $SCHEDULER_ADDRESS --nthreads 1 --memory-limit 0 &
+done
+
+# Make the script executable and run it:
+# $ chmod +x start_workers_machine_a.sh
+# $ ./start_workers_machine_a.sh
+
+# -------------------------
+# On Machine B (Worker Node)
+# -------------------------
+
+# 1. Start Dask Workers on Machine B
+#    Ensure Machine B can reach Machine A over the network.
+#    Create a script named 'start_workers_machine_b.sh' with the following content:
+
+#!/bin/bash
+# start_workers_machine_b.sh
+
+# Scheduler address (Machine A's IP address and scheduler port)
+SCHEDULER_ADDRESS="tcp://192.168.1.100:8786"
+NUM_WORKERS=30  # Number of workers to start on Machine B
+
+# Set threading environment variables to limit threads per worker
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+
+# Start workers with CPU affinity
+for i in $(seq 0 $((NUM_WORKERS - 1))); do
+    # Adjust CPU core indices if Machine B has different core numbering
+    export DASK_CPU_AFFINITY=$i
+    taskset -c $i dask-worker $SCHEDULER_ADDRESS --nthreads 1 --memory-limit 0 &
+done
+
+# Make the script executable and run it:
+# $ chmod +x start_workers_machine_b.sh
+# $ ./start_workers_machine_b.sh
+
+# -------------------------
+# In Your Python Script
+# -------------------------
+
+# 1. Configure the Dask Client
+#    This script can be run on Machine A, Machine B, or any machine that can connect to the scheduler.
+
+```python
+# your_script.py
+
+from dask.distributed import Client
+
+# Connect to the scheduler running on Machine A
+client = Client('tcp://192.168.1.100:8786')
+
+# Register a plugin to set CPU affinity within each worker (optional)
+from distributed import WorkerPlugin
+import os
+
+class SetCPUAffinityPlugin(WorkerPlugin):
+    def setup(self, worker):
+        cpu_core = int(os.environ.get('DASK_CPU_AFFINITY', -1))
+        if cpu_core >= 0:
+            try:
+                os.sched_setaffinity(0, {cpu_core})
+            except AttributeError:
+                # os.sched_setaffinity may not be available on all systems
+                pass
+
+# Register the plugin with all workers
+plugin = SetCPUAffinityPlugin()
+client.register_worker_plugin(plugin)
+
+# Now you can use Dask as usual
+# Example function to execute in parallel
+def compute_gradient(batch):
+    # Your gradient computation code here
+    pass
+
+# Distribute tasks to the cluster
+batches = [...]  # List of data batches
+futures = client.map(compute_gradient, batches)
+results = client.gather(futures)
+
+# Process results as needed
