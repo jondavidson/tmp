@@ -60,3 +60,5 @@ for i in $(seq 0 $((NUM_PHYSICAL_CORES - 1))); do
     export DASK_CPU_AFFINITY=$i
     taskset -c $i dask-worker $SCHEDULER_ADDRESS --nthreads 1 --memory-limit 0 &
 done
+
+taskset -c 36-71 python your_main_script.py
