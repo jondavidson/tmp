@@ -44,3 +44,19 @@ worker_specs = {
 
 cluster = SpecCluster(worker_specs)
 client = Client(cluster)
+
+#!/bin/bash
+# start_workers_no_contention.sh
+
+SCHEDULER_ADDRESS="tcp://192.168.1.100:8786"
+NUM_PHYSICAL_CORES=36  # Number of physical cores
+
+# Set threading environment variables
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+
+# Start workers pinned to one logical processor per physical core
+for i in $(seq 0 $((NUM_PHYSICAL_CORES - 1))); do
+    export DASK_CPU_AFFINITY=$i
+    taskset -c $i dask-worker $SCHEDULER_ADDRESS --nthreads 1 --memory-limit 0 &
+done
