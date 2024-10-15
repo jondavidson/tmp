@@ -1,6 +1,7 @@
 import numpy as np
 import polars as pl
-from numba import njit
+from numba import njit, types
+from numba.typed import List
 
 class DataProcessor:
     def __init__(self, df, group_start, group_end, num_epochs):
@@ -46,99 +47,73 @@ class DataProcessor:
         return float_data, int_data, bool_data
 
     def define_column_indices(self):
-        # Since Numba doesn't support dictionaries, we convert indices to arrays
-        self.float_indices = np.array([self.float_col_indices[col] for col in sorted(self.float_col_indices)], dtype=np.int32)
-        self.int_indices = np.array([self.int_col_indices[col] for col in sorted(self.int_col_indices)], dtype=np.int32)
-        self.bool_indices = np.array([self.bool_col_indices[col] for col in sorted(self.bool_col_indices)], dtype=np.int32)
+        # Define indices as constants
+        self.FLOAT_COL1_IDX = self.float_col_indices.get('float_col1', -1)
+        self.INT_COL1_IDX = self.int_col_indices.get('int_col1', -1)
+        self.BOOL_COL1_IDX = self.bool_col_indices.get('bool_col', -1)
 
     def run(self):
         # Run the outer loop and get the results
-        total_bool_outputs, total_scalar_outputs = outer_loop(
+        total_scalar_outputs = outer_loop(
             self.float_data,
             self.int_data,
             self.bool_data,
             self.group_start,
             self.group_end,
             self.num_epochs,
-            self.float_indices,
-            self.int_indices,
-            self.bool_indices
+            self.FLOAT_COL1_IDX,
+            self.INT_COL1_IDX,
+            self.BOOL_COL1_IDX
         )
-        return total_bool_outputs, total_scalar_outputs
+        return total_scalar_outputs
 
 # Numba-compiled functions
 
 @njit
 def expensive_function(float_data, int_data, bool_data, start_idx, end_idx,
-                       bool_output, scalar_output, float_indices, int_indices, bool_indices):
+                       scalar_output, FLOAT_COL1_IDX, INT_COL1_IDX, BOOL_COL1_IDX):
     """
     The inner loop function that performs computations on the data.
     """
-    # Constants for column indices (adjust as per your columns)
-    # Since we cannot use dynamic features inside njit, we need to define these constants outside
-    FLOAT_COL1_IDX = 0  # float_indices[0]
-    FLOAT_COL2_IDX = 1  # float_indices[1] if you have more columns
-    INT_COL1_IDX = 0    # int_indices[0]
-    BOOL_COL1_IDX = 0   # bool_indices[0]
+    # Initialize scalar outputs
+    scalar_output[0] = 0.0  # Sum of float_col1
+    scalar_output[1] = 0.0  # Sum of int_col1
+    scalar_output[2] = 0.0  # Sum of bool_col (True counts)
 
     for i in range(start_idx, end_idx):
-        idx = i - start_idx
-
-        # Initialize condition
-        condition = True
-
         # Example computations using float data
-        if float_data is not None:
-            # Access columns by indices
-            # For example, float_col1 > 0
-            condition = condition and (float_data[i, FLOAT_COL1_IDX] > 0)
-            # Add more conditions or computations as needed
-
-        # Example computations using int data
-        if int_data is not None:
-            condition = condition and (int_data[i, INT_COL1_IDX] % 2 == 0)
-            # Add more conditions or computations as needed
-
-        # Example computations using bool data
-        if bool_data is not None:
-            condition = condition and bool_data[i, BOOL_COL1_IDX]
-            # Add more conditions or computations as needed
-
-        # Update boolean output
-        bool_output[idx] = condition
-
-        # Update scalar outputs
-        if float_data is not None:
+        if float_data is not None and FLOAT_COL1_IDX != -1:
             scalar_output[0] += float_data[i, FLOAT_COL1_IDX]
             # Add more scalar computations as needed
-        if int_data is not None:
+
+        # Example computations using int data
+        if int_data is not None and INT_COL1_IDX != -1:
             scalar_output[1] += int_data[i, INT_COL1_IDX]
             # Add more scalar computations as needed
-        if bool_data is not None:
+
+        # Example computations using bool data
+        if bool_data is not None and BOOL_COL1_IDX != -1:
             scalar_output[2] += bool_data[i, BOOL_COL1_IDX]
             # Add more scalar computations as needed
 
 @njit
 def outer_loop(float_data, int_data, bool_data, group_start, group_end, num_epochs,
-               float_indices, int_indices, bool_indices):
+               FLOAT_COL1_IDX, INT_COL1_IDX, BOOL_COL1_IDX):
     """
     The outer loop function that calls the inner loop multiple times.
-    Stores results of each epoch in preallocated arrays.
+    Stores scalar results of each epoch and group.
     """
     num_groups = len(group_start)
-    n_results = 5  # Number of scalar outputs per group (adjust as needed)
+    n_results = 3  # Number of scalar outputs per group (adjust as needed)
 
-    # Preallocate result arrays
-    total_bool_outputs = np.empty((num_epochs, num_groups), dtype=object)  # Each element is an array
+    # Preallocate result array
     total_scalar_outputs = np.zeros((num_epochs, num_groups, n_results), dtype=np.float64)
 
     for epoch in range(num_epochs):
         for group_id in range(num_groups):
             start_idx = group_start[group_id]
             end_idx = group_end[group_id]
-            n = end_idx - start_idx
 
-            bool_output = np.empty(n, dtype=np.bool_)
             scalar_output = np.zeros(n_results, dtype=np.float64)
 
             # Call the inner function
@@ -148,18 +123,16 @@ def outer_loop(float_data, int_data, bool_data, group_start, group_end, num_epoc
                 bool_data,
                 start_idx,
                 end_idx,
-                bool_output,
                 scalar_output,
-                float_indices,
-                int_indices,
-                bool_indices
+                FLOAT_COL1_IDX,
+                INT_COL1_IDX,
+                BOOL_COL1_IDX
             )
 
-            # Store results
-            total_bool_outputs[epoch, group_id] = bool_output
+            # Store scalar results
             total_scalar_outputs[epoch, group_id, :] = scalar_output
 
-    return total_bool_outputs, total_scalar_outputs
+    return total_scalar_outputs
 
 # Example usage
 
@@ -183,10 +156,9 @@ num_epochs = 10  # Adjust as needed
 processor = DataProcessor(df, group_start, group_end, num_epochs)
 
 # Run the processor to get the results
-total_bool_outputs, total_scalar_outputs = processor.run()
+total_scalar_outputs = processor.run()
 
 # Access and print results
 for epoch in range(num_epochs):
     for group_id in range(len(group_start)):
-        print(f"Epoch {epoch}, Group {group_id}, Boolean Output:", total_bool_outputs[epoch, group_id])
         print(f"Epoch {epoch}, Group {group_id}, Scalar Output:", total_scalar_outputs[epoch, group_id])
