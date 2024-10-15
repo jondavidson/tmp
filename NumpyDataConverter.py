@@ -1,75 +1,101 @@
 import numpy as np
 import polars as pl
-from numba import njit
+from numba import njit, types
+from numba.typed import Dict
 
-class NumpyDataConverter:
-    def __init__(self, df: pl.DataFrame, group_start, group_end, upcast_types=True):
-        """
-        Initialize the class by converting a Polars DataFrame to NumPy 2D arrays
-        and store group boundaries.
-        """
-        self.float_data, self.int_data = self._polars_to_numpy(df, upcast_types)
-        self.group_start = group_start
-        self.group_end = group_end
+def polars_to_numpy_dict(df: pl.DataFrame, upcast_types=True):
+    """
+    Convert a Polars DataFrame into a dictionary of NumPy arrays, separated by data type.
+    """
+    data_dict = Dict.empty(
+        key_type=types.unicode_type,
+        value_type=types.float64[:],  # Placeholder, we'll adjust types dynamically
+    )
 
-    def _polars_to_numpy(self, df: pl.DataFrame, upcast_types: bool):
-        """
-        Convert a Polars DataFrame into 2D NumPy arrays by data type, upcasting types as needed.
-        """
-        float_cols = []
-        int_cols = []
+    for col in df.columns:
+        series = df[col]
+        np_array = series.to_numpy()
 
-        for col in df.columns:
-            series = df[col]
-            np_array = series.to_numpy()
+        # Upcast types if necessary
+        if upcast_types:
+            if np_array.dtype == np.float32:
+                np_array = np_array.astype(np.float64)
+            elif np_array.dtype == np.int32:
+                np_array = np_array.astype(np.int64)
+            elif np_array.dtype == np.uint32:
+                np_array = np_array.astype(np.uint64)
 
-            if np.issubdtype(np_array.dtype, np.floating):
-                if upcast_types and np_array.dtype == np.float32:
-                    np_array = np_array.astype(np.float64)
-                float_cols.append(np_array)
-            elif np.issubdtype(np_array.dtype, np.integer):
-                if upcast_types and np_array.dtype == np.int32:
-                    np_array = np_array.astype(np.int64)
-                int_cols.append(np_array)
-        
-        float_data = np.column_stack(float_cols) if float_cols else None
-        int_data = np.column_stack(int_cols) if int_cols else None
+        # Store arrays in the dictionary with their column names
+        data_dict[col] = np_array
 
-        return float_data, int_data
+    return data_dict
 
-    def get_group_chunk(self, group_id: int):
-        """
-        Access a chunk of the data corresponding to a specific group by slicing the 2D arrays.
-        """
-        start_idx = self.group_start[group_id]
-        end_idx = self.group_end[group_id]
+@njit
+def process_data(data_dict, group_start, group_end, func):
+    """
+    Process data in groups using the provided Numba-compiled function.
+    """
+    num_groups = len(group_start)
+    # Preallocate results
+    bool_outputs = []
+    scalar_outputs = []
 
-        float_chunk = self.float_data[start_idx:end_idx, :] if self.float_data is not None else None
-        int_chunk = self.int_data[start_idx:end_idx, :] if self.int_data is not None else None
+    for group_id in range(num_groups):
+        start_idx = group_start[group_id]
+        end_idx = group_end[group_id]
 
-        return float_chunk, int_chunk
+        # Extract group data
+        group_data = Dict.empty(
+            key_type=types.unicode_type,
+            value_type=types.float64[:],  # Adjust type as needed
+        )
+        for key in data_dict:
+            group_data[key] = data_dict[key][start_idx:end_idx]
 
-    def process_group(self, group_id: int, func):
-        """
-        Apply the expensive Numba-compiled function to the specified group and return results.
-        """
-        float_chunk, int_chunk = self.get_group_chunk(group_id)
-
-        bool_output = np.empty(float_chunk.shape[0], dtype=np.bool_)
+        # Initialize outputs for the group
+        n = end_idx - start_idx
+        bool_output = np.empty(n, dtype=np.bool_)
         scalar_output = np.zeros(5, dtype=np.float64)
 
-        # Call the Numba-compiled function with the group data
-        func(float_chunk, int_chunk, bool_output, scalar_output)
+        # Call the Numba-compiled function
+        func(group_data, bool_output, scalar_output)
 
-        # Return the computed outputs
-        return bool_output, scalar_output
+        # Accumulate results
+        bool_outputs.append(bool_output)
+        scalar_outputs.append(scalar_output)
+
+    return bool_outputs, scalar_outputs
+
+# Example Numba-compiled function
+@njit
+def expensive_function(group_data, bool_output, scalar_output):
+    n = len(bool_output)
+    float_col1 = group_data["float_col1"]
+    int_col1 = group_data["int_col1"]
+    for i in range(n):
+        bool_output[i] = float_col1[i] > int_col1[i]
+    scalar_output[0] = np.sum(float_col1)
 
 # Example Polars DataFrame with data
 df = pl.DataFrame({
     "float_col1": [1.1, 2.2, 3.3, 4.4, 5.5, 6.6],
     "float_col2": [6.1, 7.2, 8.3, 9.4, 10.5, 11.6],
-    "int_col1": [1, 2, 3, 4, 5, 6]
+    "int_col1": [1, 2, 3, 4, 5, 6],
+    "bool_col": [True, False, True, False, True, False],
+    "uint_col": np.array([1, 2, 3, 4, 5, 6], dtype=np.uint32),
 })
 
-# Group indices stored separately
-group_start = [0, 3]  # Start
+# Convert DataFrame to NumPy arrays in a dictionary
+data_dict = polars_to_numpy_dict(df)
+
+# Group indices
+group_start = [0, 3]
+group_end = [3, 6]
+
+# Process data
+bool_results, scalar_results = process_data(data_dict, group_start, group_end, expensive_function)
+
+# Print results
+for i, (bool_res, scalar_res) in enumerate(zip(bool_results, scalar_results)):
+    print(f"Group {i} Boolean Output:", bool_res)
+    print(f"Group {i} Scalar Output:", scalar_res)
