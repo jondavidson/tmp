@@ -7,12 +7,6 @@ class NumpyDataConverter:
         """
         Initialize the class by converting a Polars DataFrame to NumPy 2D arrays
         and store group boundaries.
-        
-        Arguments:
-        df -- Polars DataFrame with columns of various types.
-        group_start -- List or array with start indices of groups.
-        group_end -- List or array with end indices of groups.
-        upcast_types -- Whether to upcast smaller types (e.g., float32 to float64, int32 to int64).
         """
         self.float_data, self.int_data = self._polars_to_numpy(df, upcast_types)
         self.group_start = group_start
@@ -21,14 +15,6 @@ class NumpyDataConverter:
     def _polars_to_numpy(self, df: pl.DataFrame, upcast_types: bool):
         """
         Convert a Polars DataFrame into 2D NumPy arrays by data type, upcasting types as needed.
-        
-        Arguments:
-        df -- Polars DataFrame with columns of various types.
-        upcast_types -- Whether to upcast smaller types (e.g., float32 to float64, int32 to int64).
-        
-        Returns:
-        float_data -- A 2D NumPy array containing all float-type columns.
-        int_data -- A 2D NumPy array containing all integer-type columns.
         """
         float_cols = []
         int_cols = []
@@ -54,13 +40,6 @@ class NumpyDataConverter:
     def get_group_chunk(self, group_id: int):
         """
         Access a chunk of the data corresponding to a specific group by slicing the 2D arrays.
-        
-        Arguments:
-        group_id -- The ID of the group to extract.
-        
-        Returns:
-        float_chunk -- The float data for the specified group.
-        int_chunk -- The integer data for the specified group.
         """
         start_idx = self.group_start[group_id]
         end_idx = self.group_end[group_id]
@@ -73,19 +52,17 @@ class NumpyDataConverter:
     def process_group(self, group_id: int, func):
         """
         Apply the expensive Numba-compiled function to the specified group and return results.
-        
-        Arguments:
-        group_id -- The ID of the group to process.
-        func -- The Numba-compiled function to apply to the group's data.
-        
-        Returns:
-        bool_output -- The Boolean vector result for the group.
-        scalar_output -- The scalar results for the group (5 elements).
         """
         float_chunk, int_chunk = self.get_group_chunk(group_id)
 
         bool_output = np.empty(float_chunk.shape[0], dtype=np.bool_)
         scalar_output = np.zeros(5, dtype=np.float64)
+
+        # Call the Numba-compiled function with the group data
+        func(float_chunk, int_chunk, bool_output, scalar_output)
+
+        # Return the computed outputs
+        return bool_output, scalar_output
 
 # Example Polars DataFrame with data
 df = pl.DataFrame({
@@ -95,27 +72,4 @@ df = pl.DataFrame({
 })
 
 # Group indices stored separately
-group_start = [0, 3]  # Start indices of the groups
-group_end = [3, 6]    # End indices of the groups
-
-# Initialize the converter with the Polars DataFrame and group boundaries
-converter = NumpyDataConverter(df, group_start, group_end)
-
-# Numba-compiled function (simplified for example)
-@njit
-def expensive_function(float_data, int_data, bool_output, scalar_output):
-    n = float_data.shape[0]
-    for i in range(n):
-        bool_output[i] = float_data[i, 0] > int_data[i, 0]  # Example condition
-    scalar_output[0] = np.sum(float_data[:, 0])
-
-# Process the first group (group_id = 0)
-bool_result, scalar_result = converter.process_group(group_id=0, func=expensive_function)
-
-print("Boolean vector for Group 0:", bool_result)
-print("Scalar outputs for Group 0:", scalar_result)
-
-
-        func(float_chunk, int_chunk, bool_output, scalar_output)
-
-        return bool_output, scalar_output
+group_start = [0, 3]  # Start
