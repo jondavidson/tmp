@@ -1,0 +1,51 @@
+{
+    "base_path": "/data/project",
+    "datasets": [
+        {
+            "name": "raw_data",
+            "type": "PartitionedDataset",
+            "dataset_type": "source",
+            "date_format": "%Y-%m-%d"
+        },
+        {
+            "name": "other_dependency",
+            "type": "PartitionedDataset",
+            "dataset_type": "reference",
+            "date_format": "%Y-%m-%d"
+        },
+        {
+            "name": "additional_dependency",
+            "type": "PartitionedDataset",
+            "dataset_type": "reference",
+            "date_format": "%Y-%m-%d"
+        },
+        {
+            "name": "processed_data",
+            "type": "PartitionedDataset",
+            "dataset_type": "intermediate",
+            "date_format": "%Y-%m-%d",
+            "inputs": ["raw_data", "other_dependency"],
+            "outputs": ["processed_output"]
+        },
+        {
+            "name": "processed_output",
+            "type": "PartitionedDataset",
+            "dataset_type": "intermediate",
+            "date_format": "%Y-%m-%d",
+            "inputs": ["processed_data", "additional_dependency"]
+        },
+        {
+            "name": "other_input_for_aggregation",
+            "type": "LatestDataset",
+            "dataset_type": "reference",
+            "filename": "latest.csv"
+        },
+        {
+            "name": "aggregated_data",
+            "type": "LatestDataset",
+            "dataset_type": "final_output",
+            "filename": "latest_aggregated_data.csv",
+            "inputs": ["processed_output", "other_input_for_aggregation"]
+        }
+    ]
+}
