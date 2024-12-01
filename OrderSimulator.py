@@ -290,32 +290,106 @@ def print_market_impact(market_impact: Dict):
         impact = market_impact[key]
         print(f"StockSymbol: {stock_symbol}, Date: {date}, Market Impact: {impact:.2f}")
 
-# Sample data generation for testing
-def generate_sample_events(num_orders: int = 1000) -> np.ndarray:
+def generate_sample_events(num_orders=1000):
     np.random.seed(42)  # For reproducibility
     events_list = []
+    order_id_counter = 1
 
-    for i in range(num_orders):
-        # Randomly decide if this is a ping or a regular order
-        is_ping = np.random.rand() < 0.3  # 30% chance of being a ping
-        event_type = EVENT_PING_ORDER if is_ping else EVENT_NEW_ORDER
-        order_id = i + 1
-        parent_order_id = np.random.randint(1, order_id) if order_id > 1 else -1
-        quantity = np.random.uniform(10, 1000)
+    parent_orders = []
+
+    # Step 1: Generate Parent Orders
+    num_parent_orders = num_orders // 5  # Assume 20% are parent orders
+    for _ in range(num_parent_orders):
+        order_id = order_id_counter
+        order_id_counter += 1
+
+        quantity = np.random.randint(100, 1000)  # Larger quantities for parents
         timestamp = np.random.randint(1609459200, 1640995200)  # Random timestamp in 2021
         stock_symbol = np.random.randint(1, 100)  # Assume 100 different stocks
         date = int(timestamp // 86400)  # Simplified date representation
-        events_list.append((event_type, order_id, parent_order_id, quantity, timestamp, stock_symbol, date, is_ping))
 
-        # Randomly decide to add a fill or cancel event
+        # Create parent order event
+        events_list.append((EVENT_NEW_ORDER, order_id, -1, quantity, timestamp, stock_symbol, date, False))
+        parent_orders.append({
+            'OrderId': order_id,
+            'RemainingQuantity': quantity,
+            'Timestamp': timestamp,
+            'StockSymbol': stock_symbol,
+            'Date': date
+        })
+
+    # Step 2: Generate Child Orders Based on Parents
+    for parent in parent_orders:
+        parent_order_id = parent['OrderId']
+        parent_quantity = parent['RemainingQuantity']
+        timestamp = parent['Timestamp']
+        stock_symbol = parent['StockSymbol']
+        date = parent['Date']
+
+        num_children = np.random.randint(1, 4)  # Each parent has 1 to 3 children
+
+        child_quantities = np.random.multinomial(parent_quantity, np.ones(num_children) / num_children)
+
+        for q in child_quantities:
+            order_id = order_id_counter
+            order_id_counter += 1
+
+            # Create child order event
+            events_list.append((EVENT_NEW_ORDER, order_id, parent_order_id, q, timestamp + 1, stock_symbol, date, False))
+
+            # Randomly decide to add a fill or cancel event
+            rand_val = np.random.rand()
+            if rand_val < 0.7:
+                # Fill event
+                fill_quantity = q  # Assume child orders are fully filled
+                events_list.append((EVENT_FILL, order_id, -1, fill_quantity, timestamp + 2, stock_symbol, date, False))
+            elif rand_val < 0.9:
+                # Cancel event
+                events_list.append((EVENT_CANCEL, order_id, -1, 0, timestamp + 2, stock_symbol, date, False))
+
+    # Step 3: Generate Additional Orders (Pings and Non-Hierarchical Orders)
+    remaining_orders = num_orders - len(events_list)
+    for _ in range(remaining_orders // 2):
+        order_id = order_id_counter
+        order_id_counter += 1
+
+        quantity = np.random.randint(10, 100)  # Smaller quantities for pings
+        timestamp = np.random.randint(1609459200, 1640995200)
+        stock_symbol = np.random.randint(1, 100)
+        date = int(timestamp // 86400)
+        is_ping = True
+
+        # Create ping order event
+        events_list.append((EVENT_PING_ORDER, order_id, -1, quantity, timestamp, stock_symbol, date, is_ping))
+
+        # Randomly decide to fill the ping
+        if np.random.rand() < 0.5:
+            # Fill event
+            fill_quantity = quantity
+            events_list.append((EVENT_FILL, order_id, -1, fill_quantity, timestamp + 1, stock_symbol, date, False))
+
+    # Generate non-hierarchical regular orders
+    for _ in range(remaining_orders // 2):
+        order_id = order_id_counter
+        order_id_counter += 1
+
+        quantity = np.random.randint(10, 100)
+        timestamp = np.random.randint(1609459200, 1640995200)
+        stock_symbol = np.random.randint(1, 100)
+        date = int(timestamp // 86400)
+
+        # Create regular order event
+        events_list.append((EVENT_NEW_ORDER, order_id, -1, quantity, timestamp, stock_symbol, date, False))
+
+        # Randomly decide to fill or cancel
         rand_val = np.random.rand()
         if rand_val < 0.5:
             # Fill event
-            fill_quantity = np.random.uniform(0, quantity)
-            events_list.append((EVENT_FILL, order_id, -1, fill_quantity, timestamp + 100, stock_symbol, date, False))
+            fill_quantity = quantity
+            events_list.append((EVENT_FILL, order_id, -1, fill_quantity, timestamp + 1, stock_symbol, date, False))
         elif rand_val < 0.7:
             # Cancel event
-            events_list.append((EVENT_CANCEL, order_id, -1, 0.0, timestamp + 100, stock_symbol, date, False))
+            events_list.append((EVENT_CANCEL, order_id, -1, 0, timestamp + 1, stock_symbol, date, False))
 
     return np.array(events_list, dtype=event_dtype)
 
