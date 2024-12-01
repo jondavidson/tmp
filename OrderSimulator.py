@@ -4,17 +4,17 @@ from numba.experimental import jitclass
 from numba.typed import List, Dict
 
 # Constants for order states
-STATE_PENDING = 0
-STATE_ACK = 1
-STATE_PENDING_CANCEL = 2
-STATE_CANCELED = 3
-STATE_FILLED = 4
+STATE_PENDING = np.int8(0)
+STATE_ACK = np.int8(1)
+STATE_PENDING_CANCEL = np.int8(2)
+STATE_CANCELED = np.int8(3)
+STATE_FILLED = np.int8(4)
 
 # Constants for event types
-EVENT_NEW_ORDER = 0
-EVENT_FILL = 1
-EVENT_CANCEL = 2
-EVENT_PING_ORDER = 3
+EVENT_NEW_ORDER = np.int8(0)
+EVENT_FILL = np.int8(1)
+EVENT_CANCEL = np.int8(2)
+EVENT_PING_ORDER = np.int8(3)
 
 # Define the Order class using jitclass
 order_spec = [
@@ -32,8 +32,9 @@ order_spec = [
 
 @jitclass(order_spec)
 class Order:
-    def __init__(self, OrderId, ParentIndex, RootIndex, State, OriginalQuantity,
-                 FilledQuantity, RemainingQuantity, StockSymbol, Date, IsPing):
+    def __init__(self, OrderId: int, ParentIndex: int, RootIndex: int, State: int,
+                 OriginalQuantity: float, FilledQuantity: float, RemainingQuantity: float,
+                 StockSymbol: int, Date: int, IsPing: bool):
         self.OrderId = OrderId
         self.ParentIndex = ParentIndex
         self.RootIndex = RootIndex
@@ -58,7 +59,7 @@ event_dtype = np.dtype([
 ])
 
 @njit
-def process_events(events, orders, order_id_to_index, market_impact):
+def process_events(events: np.ndarray, orders: List, order_id_to_index: Dict, market_impact: Dict):
     for i in range(len(events)):
         event = events[i]
         event_type = event['EventType']
@@ -74,7 +75,7 @@ def process_events(events, orders, order_id_to_index, market_impact):
             continue
 
 @njit
-def handle_new_order(event, orders, order_id_to_index):
+def handle_new_order(event: np.ndarray, orders: List, order_id_to_index: Dict):
     order_id = event['OrderId']
     parent_order_id = event['ParentOrderId']
     quantity = event['Quantity']
@@ -110,7 +111,7 @@ def handle_new_order(event, orders, order_id_to_index):
     order_id_to_index[order_id] = len(orders) - 1
 
 @njit
-def handle_fill(event, orders, order_id_to_index, market_impact):
+def handle_fill(event: np.ndarray, orders: List, order_id_to_index: Dict, market_impact: Dict):
     order_id = event['OrderId']
     quantity = event['Quantity']
 
@@ -139,7 +140,7 @@ def handle_fill(event, orders, order_id_to_index, market_impact):
         propagate_fill_up(orders, index, fill_quantity)
 
 @njit
-def handle_cancel(event, orders, order_id_to_index):
+def handle_cancel(event: np.ndarray, orders: List, order_id_to_index: Dict):
     order_id = event['OrderId']
 
     if order_id in order_id_to_index:
@@ -149,7 +150,7 @@ def handle_cancel(event, orders, order_id_to_index):
         order.RemainingQuantity = 0.0
 
 @njit
-def calculate_max_fillable(orders, index, desired_quantity):
+def calculate_max_fillable(orders: List, index: int, desired_quantity: float) -> float:
     order = orders[index]
     max_fillable = desired_quantity
 
@@ -163,7 +164,7 @@ def calculate_max_fillable(orders, index, desired_quantity):
     return max_fillable
 
 @njit
-def simulate_fill(orders, index, desired_quantity):
+def simulate_fill(orders: List, index: int, desired_quantity: float) -> float:
     order = orders[index]
 
     # Determine the maximum fillable quantity without overfilling parents
@@ -184,7 +185,7 @@ def simulate_fill(orders, index, desired_quantity):
     return fill_quantity
 
 @njit
-def propagate_fill_up(orders, index, quantity):
+def propagate_fill_up(orders: List, index: int, quantity: float):
     parent_index = orders[index].ParentIndex
     if parent_index != -1:
         parent_order = orders[parent_index]
@@ -205,7 +206,7 @@ def propagate_fill_up(orders, index, quantity):
         propagate_fill_up(orders, parent_index, fill_quantity)
 
 @njit
-def propagate_unfill_up(orders, index, quantity):
+def propagate_unfill_up(orders: List, index: int, quantity: float):
     parent_index = orders[index].ParentIndex
     if parent_index != -1:
         parent_order = orders[parent_index]
@@ -220,18 +221,15 @@ def propagate_unfill_up(orders, index, quantity):
         propagate_unfill_up(orders, parent_index, quantity)
 
 @njit
-def simulate_fills(orders, order_id_to_index, market_impact):
+def simulate_fills(orders: List, order_id_to_index: Dict, market_impact: Dict):
     for index in range(len(orders)):
         order = orders[index]
 
         if order.IsPing:
             # Simulation logic specific to pings
-            # Decide whether to fill pings based on internal logic
             desired_quantity = order.RemainingQuantity
             fill_quantity = simulate_fill(orders, index, desired_quantity)
-
-            # For internal pings, you may or may not update market impact
-            # Here we assume pings do not impact the external market
+            # Assuming pings do not impact the external market
         else:
             # Existing simulation logic for non-ping orders
             # Case 1: Fill an order that was not filled in reality
@@ -270,29 +268,30 @@ def simulate_fills(orders, order_id_to_index, market_impact):
             order.State = STATE_FILLED
 
 @njit
-def validate_orders(orders):
+def validate_orders(orders: List):
     for order in orders:
-        if order.FilledQuantity > order.OriginalQuantity:
+        if order.FilledQuantity > order.OriginalQuantity + 1e-6:
+            # Allowing a small epsilon due to floating-point precision
             raise ValueError(f"Order {order.OrderId} overfilled!")
 
 # Function to print order details (for testing purposes)
-def print_order_details(orders):
+def print_order_details(orders: List):
     print("Order Details:")
     print("Index | OrderId | ParentIndex | RootIndex | State | OrigQty | FilledQty | RemainQty | IsPing")
     for idx, order in enumerate(orders):
         print(f"{idx} | {order.OrderId} | {order.ParentIndex} | {order.RootIndex} | {order.State} | "
-              f"{order.OriginalQuantity} | {order.FilledQuantity} | {order.RemainingQuantity} | {order.IsPing}")
+              f"{order.OriginalQuantity:.2f} | {order.FilledQuantity:.2f} | {order.RemainingQuantity:.2f} | {order.IsPing}")
 
 # Function to print market impact (for testing purposes)
-def print_market_impact(market_impact):
+def print_market_impact(market_impact: Dict):
     print("\nMarket Impact:")
     for key in market_impact:
         stock_symbol, date = key
         impact = market_impact[key]
-        print(f"StockSymbol: {stock_symbol}, Date: {date}, Market Impact: {impact}")
+        print(f"StockSymbol: {stock_symbol}, Date: {date}, Market Impact: {impact:.2f}")
 
 # Sample data generation for testing
-def generate_sample_events(num_orders=1000):
+def generate_sample_events(num_orders: int = 1000) -> np.ndarray:
     np.random.seed(42)  # For reproducibility
     events_list = []
 
@@ -309,11 +308,12 @@ def generate_sample_events(num_orders=1000):
         events_list.append((event_type, order_id, parent_order_id, quantity, timestamp, stock_symbol, date, is_ping))
 
         # Randomly decide to add a fill or cancel event
-        if np.random.rand() < 0.5:
+        rand_val = np.random.rand()
+        if rand_val < 0.5:
             # Fill event
             fill_quantity = np.random.uniform(0, quantity)
             events_list.append((EVENT_FILL, order_id, -1, fill_quantity, timestamp + 100, stock_symbol, date, False))
-        elif np.random.rand() < 0.2:
+        elif rand_val < 0.7:
             # Cancel event
             events_list.append((EVENT_CANCEL, order_id, -1, 0.0, timestamp + 100, stock_symbol, date, False))
 
