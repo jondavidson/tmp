@@ -1,3 +1,13 @@
+from pyvis.network import Network
+
+net = Network(notebook=True)
+for n, d in H.nodes(data=True):
+    net.add_node(n, label=str(n), color='blue' if d['side']=='BUY' else 'red')
+for u,v in H.edges():
+    net.add_edge(u,v)
+
+net.show("graph.html")
+
 import pandas as pd
 import networkx as nx
 import matplotlib.pyplot as plt
