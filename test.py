@@ -1,3 +1,90 @@
+import pandas as pd
+from ipytree import Tree, Node
+from ipywidgets import HBox, VBox, HTML
+import qgrid
+
+# Assume df_orders is a DataFrame of orders with columns:
+# ['OrderId', 'ParentId', 'RootId', 'State', 'Side', 'OriginalQuantity', 'FilledQuantity', 'RemainingQuantity', 'IsPing']
+
+def build_tree(df, root_id):
+    """
+    Build a tree of nodes from a DataFrame for a given root_id.
+    """
+    # Create a mapping of ParentId -> [Children Orders]
+    child_map = {}
+    for _, row in df.iterrows():
+        pid = row['ParentId']
+        if pid not in child_map:
+            child_map[pid] = []
+        child_map[pid].append(row)
+    
+    def create_node(order):
+        # Represent the order as a Node
+        label = f"OrderId={order['OrderId']} State={order['State']}"
+        node = Node(label)
+        oid = order['OrderId']
+        # If this order has children
+        if oid in child_map:
+            for child_order in child_map[oid]:
+                node.add_node(create_node(child_order))
+        return node
+    
+    # Find the root order(s)
+    root_orders = df[df['ParentId'] == -1]
+    # For this scenario, we have one root per root_id
+    root_order = root_orders[root_orders['RootId'] == root_id].iloc[0]
+    return create_node(root_order)
+
+# Suppose we already have df_orders from previous steps.
+# Create a list of RootIds to choose from
+root_ids = df_orders['RootId'].unique()
+
+root_dd = widgets.Dropdown(options=sorted(root_ids), description="RootId")
+display(root_dd)
+
+# Prepare a qgrid to show details
+qgrid_widget = qgrid.show_grid(df_orders.head(0), show_toolbar=False)  # empty initially
+
+def on_node_clicked(change):
+    # When a node is clicked, we try to parse out the OrderId from the label
+    node = change['owner']
+    # Extract OrderId from label using simple parsing:
+    label = node.label
+    # Label format: "OrderId=xxx State=YYY"
+    # Parse OrderId
+    if 'OrderId=' in label:
+        part = label.split(' ')[0]  # "OrderId=xxx"
+        oid_str = part.split('=')[1]
+        oid = int(oid_str)
+        # Filter df_orders by this OrderId
+        row = df_orders[df_orders['OrderId'] == oid]
+        qgrid_widget.df = row
+        qgrid_widget.refresh()
+
+# Build a tree for the currently selected RootId and display
+def update_tree(change):
+    root_id = root_dd.value
+    # Filter df_orders for this root_id
+    df_sub = df_orders[df_orders['RootId'] == root_id]
+    tree = Tree()
+    root_node = build_tree(df_sub, root_id)
+    tree.add_node(root_node)
+    
+    # Attach click callbacks
+    def attach_click_handlers(node):
+        node.observe(on_node_clicked, 'selected')
+        for child in node.nodes:
+            attach_click_handlers(child)
+    attach_click_handlers(root_node)
+
+    display(HBox([tree, qgrid_widget]))
+
+root_dd.observe(update_tree, 'value')
+
+# Trigger an initial display
+root_dd.value = root_ids[0]
+
+
 from pyvis.network import Network
 
 net = Network(notebook=True)
