@@ -109,4 +109,65 @@ df = pl.DataFrame(data)
 result = construct_ancestors(df)
 
 # Display result
-print(result)
+
+
+
+
+
+
+import numpy as np
+from numba import njit
+
+@njit
+def construct_hierarchy_and_levels_iterative(orders, max_depth=10):
+    # Extract order details
+    num_orders = len(orders)
+    order_ids = orders[:, 0]
+    parent_ids = orders[:, 1]
+    levels = orders[:, 3]
+
+    # Initialize the ancestor array
+    ancestors = -np.ones((num_orders, max_depth), dtype=np.int32)
+
+    # Sort orders by level for sequential processing
+    sorted_indices = np.argsort(levels)
+    orders = orders[sorted_indices]
+
+    # Map orderId to index for quick lookup
+    order_id_to_index = {order_ids[i]: i for i in range(num_orders)}
+
+    # Iterate over orders level by level
+    for i in range(num_orders):
+        order_id = orders[i, 0]
+        parent_id = orders[i, 1]
+        level = levels[i]
+
+        if parent_id != -1:
+            parent_index = order_id_to_index[parent_id]
+
+            # Copy parent's ancestors and add parent to the list
+            ancestors[i, :level] = ancestors[parent_index, :level]
+            ancestors[i, level - 1] = parent_id
+
+    # Reverse sorting to match original order
+    reverse_indices = np.argsort(sorted_indices)
+    ancestors = ancestors[reverse_indices]
+
+    return ancestors
+
+# Example Usage
+orders = np.array([
+    [1, -1, 1, 0],  # orderId=1, parentId=-1, rootId=1, level=0
+    [2, 1, 1, 1],   # orderId=2, parentId=1, rootId=1, level=1
+    [3, 1, 1, 1],   # orderId=3, parentId=1, rootId=1, level=1
+    [4, 2, 1, 2],   # orderId=4, parentId=2, rootId=1, level=2
+    [5, 2, 1, 2],   # orderId=5, parentId=2, rootId=1, level=2
+    [6, 3, 1, 2],   # orderId=6, parentId=3, rootId=1, level=2
+], dtype=np.int32)
+
+# Call the function
+ancestors = construct_hierarchy_and_levels_iterative(orders)
+
+# Display the results
+print("Ancestors:")
+print(ancestors)
